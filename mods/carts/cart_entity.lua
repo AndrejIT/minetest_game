@@ -223,6 +223,12 @@ local function rail_on_step(self, dtime)
 			-- No rail found: reset back to the expected position
 			pos = vector.new(self.old_pos)
 			update.pos = true
+            --stop the madness
+            self.object:setvelocity({x=0,y=0,z=0})
+            self.old_vel = {x = 0, y = 0, z = 0}
+            self.object:setacceleration({x = 0, y = 0, z = 0})
+            self.velocity = {x = 0, y = 0, z = 0}
+            --it won't stop :(
 		end
 	end
 

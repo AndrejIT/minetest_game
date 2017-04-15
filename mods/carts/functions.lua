@@ -163,7 +163,7 @@ function carts:pathfinder(pos_, old_pos, old_dir, ctrl, pf_switch, railtype)
 	local pf_pos = vector.round(old_pos)
 	local pf_dir = vector.new(old_dir)
 
-	for i = 1, 3 do
+	for i = 1, 5 do
 		if vector.equals(pf_pos, pos) then
 			-- Success! Cart moved on correctly
 			return true
