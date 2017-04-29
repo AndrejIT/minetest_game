@@ -1,4 +1,5 @@
 local cart_entity = {
+    hp_max = 80,
 	physical = false, -- otherwise going uphill breaks
 	collisionbox = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5},
 	visual = "mesh",
@@ -17,6 +18,7 @@ local cart_entity = {
     old_pos = nil,	--rounded
     next_pos = nil,	--rounded
     old_direction = nil,
+    full_stop = false,  --when cart stopped and dont hawe any reason to move
 
     -- sound refresh interval = 1.0sec
     rail_sound = function(self, dtime)
@@ -88,19 +90,38 @@ local cart_entity = {
     end,
 
     --align cart position on railroad
-    precize_on_rail = function(self, pos)
+    precize_on_rail = function(self, pos, tolerance)
         local v = self.object:getvelocity()
         local aligned_pos = table.copy(pos)
-    	if self.old_direction.x == 0 and math.abs(self.old_pos.x-pos.x)>0.2 then
+    	if self.old_direction.x == 0 and math.abs(self.old_pos.x-pos.x)>tolerance then
             aligned_pos.x = self.old_pos.x
     		self.object:setpos(aligned_pos)
-    	elseif self.old_direction.z == 0 and math.abs(self.old_pos.z-pos.z)>0.2 then
+    	elseif self.old_direction.z == 0 and math.abs(self.old_pos.z-pos.z)>tolerance then
             aligned_pos.z = self.old_pos.z
     		self.object:setpos(aligned_pos)
-    	elseif self.old_direction.y == 0 and math.abs(self.old_pos.y-pos.y)>0.2 then
+    	elseif self.old_direction.y == 0 and math.abs(self.old_pos.y-pos.y)>tolerance then
             aligned_pos.y = self.old_pos.y
     		self.object:setpos(aligned_pos)
     	end
+    end,
+
+    -- rounded to 1 direction vector betvin start and end positions
+    precize_direction = function(self, pos1, pos2)
+        local dir = {x=0, y=0, z=0}
+        if pos1.x == pos2.x then
+            dir.z = math.sign(pos2.z - pos1.z)
+        elseif pos1.z == pos2.z then
+            dir.x = math.sign(pos2.x - pos1.x)
+        elseif math.abs(pos2.x - pos1.x) < math.abs(pos2.z - pos1.z) then
+            dir.z = math.sign(pos2.z - pos1.z)
+        else
+            dir.x = math.sign(pos2.x - pos1.x)
+        end
+
+        if math.abs(pos2.y - pos1.y) > 0 then
+            dir.y = math.sign(pos2.y - pos1.y)
+        end
+        return dir
     end,
 
     --position, relative to
@@ -117,37 +138,37 @@ local cart_entity = {
             return {x=pos.x, y=pos.y+rel_pos.y, z=pos.z}
         end
 
-        local v = direction
-        if v == nil then
+        local dir = direction
+        if dir == nil then
             local yaw = self.object:getyaw()
 
-            v = {x=0, y=0, z=0}
+            dir = {x=0, y=0, z=0}
 
             yaw = yaw + math.pi/2
-            v.x = math.cos(yaw)
-            v.z = math.sin(yaw)
+            dir.x = math.cos(yaw)
+            dir.z = math.sin(yaw)
 
-            v = vector.normalize(v)
+            dir = vector.normalize(dir)
         end
 
         if --NORD
-            v.x > 0 and
-            v.z >= -v.x and v.z <= v.x
+            dir.x > 0 and
+            dir.z <= math.abs(dir.x)
         then
             return {x=pos.x+rel_pos.x, y=pos.y+rel_pos.y, z=pos.z+rel_pos.z}
         elseif --EAST
-            v.z < 0 and
-            v.x >= v.z and v.x <= -v.z
+            dir.z < 0 and
+            dir.x <= math.abs(dir.z)
         then
-            return {x=pos.x-rel_pos.z, y=pos.y+rel_pos.y, z=pos.z-rel_pos.x}
+            return {x=pos.x+rel_pos.z, y=pos.y+rel_pos.y, z=pos.z-rel_pos.x}
         elseif --WEST
-            v.z > 0 and
-            v.x >= -v.z and v.x <= v.z
+            dir.z > 0 and
+            dir.x <= math.abs(dir.z)
         then
-            return {x=pos.x+rel_pos.z, y=pos.y+rel_pos.y, z=pos.z+rel_pos.x}
+            return {x=pos.x-rel_pos.z, y=pos.y+rel_pos.y, z=pos.z+rel_pos.x}
         elseif --SOUTH
-            v.x < 0 and
-            v.z >= v.x and v.z <= -v.x
+            dir.x < 0 and
+            dir.z <= math.abs(dir.x)
         then
             return {x=pos.x-rel_pos.x, y=pos.y+rel_pos.y, z=pos.z-rel_pos.z}
         end
@@ -233,7 +254,8 @@ local cart_entity = {
     end,
 
     on_activate = function(self, staticdata, dtime_s)
-        self.object:set_armor_groups({immortal=1})
+        -- self.object:set_armor_groups({immortal=1})
+        self.object:set_armor_groups({fleshy=40, snappy=60, choppy=80})
 
         --decrease speed after cart is left unattended
         self.object:setvelocity(vector.multiply(self.object:getvelocity(), 0.5))
@@ -242,16 +264,16 @@ local cart_entity = {
         local d = self:get_yaw()
 
         self.old_pos = vector.round(pos)
-        self.old_direction = self:get_yaw()
+        local dir = self:get_yaw()
 
         --strict direction
-        self.old_direction.y = 0
-        if math.abs(self.old_direction.x) > math.abs(self.old_direction.z) then
-            self.old_direction.z = 0
+        dir.y = 0
+        if math.abs(dir.x) > math.abs(dir.z) then
+            dir.z = 0
         else
-            self.old_direction.x = 0
+            dir.x = 0
         end
-        self.old_direction = vector.normalize(self.old_direction)
+        self.old_direction = vector.round(dir)
     end,
 
     on_step = function(self, dtime)
@@ -259,11 +281,6 @@ local cart_entity = {
         local p = vector.round(pos)
         local v = self.object:getvelocity()
         local s = vector.length(v)
-
-        --reset if cart stopped because of energy loss
-        if self.next_pos ~= nil and s < 0.01 then
-            self.next_pos = nil
-        end
 
         -- Get player controls
         if self.driver then
@@ -279,7 +296,8 @@ local cart_entity = {
                 elseif ctrl and ctrl.left then
                     self.control_left = true
                     self.control_right = nil
-                elseif ctrl and ctrl.down then
+                end
+                if ctrl and ctrl.down then
                     if (s - 1) >= 0 then
                         s = s - 1.5
                     end
@@ -287,49 +305,136 @@ local cart_entity = {
             end
         end
 
-        --align cart on railroad
-        self:precize_on_rail(pos)
 
-        --calculate where cart will go next
-        if self.next_pos == nil or
-            (math.abs(self.old_pos.x - pos.x) + math.abs(self.old_pos.z - pos.z)) > 0.5 then
+        if self.full_stop then
+            -- when punch or mesecons
+            if self.punched and self.punch_direction then
+                self.full_stop = false
+                --handle punch
+                if (s + 1) <= carts.punch_speed_max then
+                    s = s + 1
+                    local dir = table.copy(self.punch_direction)
+                    dir.y = 0
+                    --strict direction
+                    if math.abs(dir.x) > math.abs(dir.z) then
+                        dir.z = 0
+                    else
+                        dir.x = 0
+                    end
+                    dir = vector.normalize(dir)
+                    self.old_direction = vector.round(dir)
+                    self.punched = nil
+
+                    self.old_pos = table.copy(p)
+                    self.next_pos = self:get_next_rail_pos(p, self.old_direction)
+
+                    if self.next_pos then
+                        --set new cart object parameters
+                        v = vector.multiply(vector.normalize(self.old_direction), s)
+                        self:set_velocity(v)
+                        self:set_yaw(self.old_direction)
+                    end
+                else
+                    self.punched = nil
+                end
+            end
+        elseif s < 0.3 then
+            -- when stop is temporary
+
             local node = minetest.get_node(p)
 
+            -- uphill - invert old direction
+            if self.old_direction.y == 1 then
+                self.old_direction.x = -self.old_direction.x
+                self.old_direction.z = -self.old_direction.z
+                self.old_direction.y = -1
+                s = s + 0.5 -- downhill
+            end
+
+            self.old_pos = table.copy(p)
+            self.next_pos = self:get_next_rail_pos(p, self.old_direction)
+
+            if self.next_pos then
+                self.old_direction = self:precize_direction(self.old_pos, self.next_pos)
+                --check rail and handle energy loss/increase
+                if node.name == "carts:powerrail" then
+                    s = s + 0.5
+                elseif node.name == "carts:brakerail" then
+                    s = s - 0.5
+                else
+                    s = s - 0.05 --rail or something else
+                end
+
+                -- cart will not move anymore
+                if s < 0.3 then
+                    s = 0
+                    self.next_pos = nil
+                    self.full_stop = true
+                end
+            else
+                s = 0
+                self.full_stop = true
+            end
+
+            --set new cart object parameters
+            v = vector.multiply(vector.normalize(self.old_direction), s)
+            self:set_velocity(v)
+            self:set_yaw(self.old_direction)
+
+        elseif self.next_pos == nil or
+            math.abs(self.old_pos.x - pos.x) > 0.5 or
+            math.abs(self.old_pos.z - pos.z) > 0.5
+        then
+            -- when cart reached next rail
+            local node = minetest.get_node(p)
+            self:precize_on_rail(pos, 0.2)
+
+            --calculate where cart will go next
             if node.name == "ignore" then
                 --map not loaded yet
                 self.next_pos = nil
+                s = s * 0.5
             elseif minetest.get_item_group(node.name, "rail") > 0 and
-                (math.abs(self.old_pos.x - pos.x) + math.abs(self.old_pos.z - pos.z)) > 1.5 then
+                (math.abs(self.old_pos.x - pos.x) > 1.5 or
+                math.abs(self.old_pos.z - pos.z) > 1.5)
+            then
                 --cart went too far, accept new road
                 self.old_pos = table.copy(p)
                 self.next_pos = self:get_next_rail_pos(p, self.old_direction)
                 s = s * 0.9
-            elseif (math.abs(self.old_pos.x - pos.x) + math.abs(self.old_pos.z - pos.z)) > 1.5 then
+            elseif (math.abs(self.old_pos.x - pos.x) > 1.5 or
+                math.abs(self.old_pos.z - pos.z) > 1.5)
+            then
                 --cart went too far, return to old road
                 if self.next_pos then
                     local nextnext_pos = self:get_next_rail_pos(self.next_pos, self.old_direction)
                     if nextnext_pos == nil then
                         --dead end, stop cart
                         self.old_pos = table.copy(self.next_pos)
+                        self.full_stop = true
                         self.next_pos = nil
                         self.object:setpos(self.old_pos)
                         s = 0
                     else
                         --continue from last rail
+                        local dir = self:precize_direction(self.next_pos, nextnext_pos)
                         self.old_pos = table.copy(nextnext_pos)
                         self.object:setpos(nextnext_pos)
-                        self.next_pos = self:get_next_rail_pos(nextnext_pos, self.old_direction)
+                        self.next_pos = self:get_next_rail_pos(nextnext_pos, dir)
                     end
                 end
                 s = s * 0.9
             elseif minetest.get_item_group(node.name, "rail") > 0 and self.next_pos and
-                (math.abs(self.next_pos.x - pos.x) + math.abs(self.next_pos.z - pos.z)) < 0.5 then
+                (math.abs(self.old_pos.x - pos.x) > 0.5 or
+                math.abs(self.old_pos.z - pos.z) > 0.5)
+            then
                 --on next rail
                 self.old_pos = table.copy(p)
                 self.next_pos = self:get_next_rail_pos(p, self.old_direction)
 
                 if self.next_pos == nil then
                     --dead end, stop cart
+                    self.full_stop = true
                     self.next_pos = nil
                     self.object:setpos(self.old_pos)
                     s = 0
@@ -341,6 +446,7 @@ local cart_entity = {
 
                 if self.next_pos == nil then
                     --dead end, stop cart
+                    self.full_stop = true
                     self.next_pos = nil
                     self.object:setpos(self.old_pos)
                     s = 0
@@ -349,104 +455,99 @@ local cart_entity = {
 
             self.control_left = nil
             self.control_right = nil
-        end
 
-        --calculate next cart direction
-        if self.old_pos ~=nil and self.next_pos ~= nil then
-            local dir = vector.direction(self.old_pos, self.next_pos)
-            --dir.y = 0
-            --strict direction
-            if math.abs(dir.x) > math.abs(dir.z) then
-                dir.z = 0
-            else
-                dir.x = 0
-            end
-            dir = vector.normalize(dir)
+            --calculate next cart direction
+            if self.old_pos ~=nil and self.next_pos ~= nil then
+                local dir = self:precize_direction(self.old_pos, self.next_pos)
+                local direction_changes = false
 
-            --more energy loss on turns
-            if dir.x ~= self.old_direction.x or dir.z ~= self.old_direction.z then
-                s = s - 0.4
-            end
-
-            --do not flip!
-            if dir.x * self.old_direction.x ~= -1 and dir.z * self.old_direction.z ~= -1 then
-                self.old_direction = table.copy(dir)
-            end
-        end
-
-        --handle punch
-        if self.punched and self.punch_direction then
-            if self.next_pos == nil then
-                self.next_pos = self:get_next_rail_pos(p, self.old_direction)
-                --wait...
-            elseif (s + 1) <= carts.punch_speed_max then
-                s = s + 1
-                local dir = table.copy(self.punch_direction)
-                dir.y = 0
-                --strict direction
-                if math.abs(dir.x) > math.abs(dir.z) then
-                    dir.z = 0
-                else
-                    dir.x = 0
+                -- direction changes
+                if dir.x ~= self.old_direction.x or dir.z ~= self.old_direction.z or dir.y ~= self.old_direction.y then
+                    --do not flip!
+                    if dir.x * self.old_direction.x ~= -1 and dir.z * self.old_direction.z ~= -1 then
+                        direction_changes = true
+                    end
                 end
-                dir = vector.normalize(dir)
-                self.old_direction = table.copy(dir)
-                self.punched = nil
-            else
-                self.punched = nil
+
+                -- new direction
+                if direction_changes then
+                    self.old_direction = table.copy(dir)
+                end
+
+                -- more energy loss on turns
+                if direction_changes then
+                    s = s - 0.4
+                end
             end
-        end
 
-        --check rail and handle energy loss/increase
-        if self.next_pos ~= nil then
-            local node = minetest.get_node(p)
-
-            if node.name == "carts:powerrail" then
-                s = s + 0.5     --powerrail
-            elseif node.name == "carts:brakerail" then
-                s = s - 0.5    --brakerail
-            else
-                s = s - 0.05    --rail or something else
+            --handle downhill/uphill energy
+            if self.next_pos ~= nil then
+                if self.next_pos.y < self.old_pos.y then
+                    s = s + 0.5 -- downhill
+                elseif self.next_pos.y > self.old_pos.y then
+                    s = s - 0.5 -- uphill
+                end
             end
-        end
 
-        --mesecons support?
-        -- --local acceleration = minetest.get_item_group(node.name, "acceleration")
-        -- local acceleration = tonumber(minetest.get_meta(p):get_string("cart_acceleration"))--original PilzAdam version
-        -- if acceleration > 0 or acceleration < 0 then
-        --     s = s + acceleration     --powerrail
-        -- end
-
-        --handle uphill/downhill
-        if self.next_pos ~= nil then
-            if self.next_pos.y < self.old_pos.y then
-                s = s + 0.5
-            elseif self.next_pos.y > self.old_pos.y then
-                s = s - 0.5
+            --check rail and handle energy loss/increase
+            if self.next_pos ~= nil then
+                if node.name == "carts:powerrail" then
+                    s = s + 0.5
+                elseif node.name == "carts:brakerail" then
+                    s = s - 0.5
+                else
+                    s = s - 0.05 --rail or something else
+                end
+                -- loss energy on skipped blocks
+                s = s - 0.05 * vector.distance(self.next_pos, self.old_pos)
             end
-        end
 
-        --limit speed
-        if s > carts.speed_max then
-            s = carts.speed_max
-        elseif s < 0 then
-            s = 0
-        end
+            --mesecons support?
+            -- --local acceleration = minetest.get_item_group(node.name, "acceleration")
+            -- local acceleration = tonumber(minetest.get_meta(p):get_string("cart_acceleration"))--original PilzAdam version
+            -- if acceleration > 0 or acceleration < 0 then
+            --     s = s + acceleration     --powerrail
+            -- end
 
-        --set new cart object parameters
-        v = vector.multiply(self.old_direction, s)
-        self:set_velocity(v)
-        self:set_yaw(self.old_direction)
+            --handle punch
+            if self.punched and self.punch_direction then
+                if (s + 1) <= carts.punch_speed_max then
+                    s = s + 1
+                else
+                    self.punched = nil
+                end
+            end
+
+            --limit speed
+            if s > carts.speed_max then
+                s = carts.speed_max
+            elseif s < 0 then
+                s = 0
+            end
+
+            -- cart will not move anymore
+            if s < 0.3 then
+                s = 0
+                self.next_pos = nil
+                -- downhil/uphill and powerrail prevent stop
+                if  self.old_direction.y == 0 and
+                    node.name ~= "carts:powerrail"
+                then
+                    self.full_stop = true
+                end
+            end
+
+            --set new cart object parameters
+            v = vector.multiply(vector.normalize(self.old_direction), s)
+            self:set_velocity(v)
+            self:set_yaw(self.old_direction)
+        end
 
         --animation for uphill/downhill
-        if self.next_pos then
-            if self.next_pos.y < self.old_pos.y then
-                self.object:set_animation({x=1, y=1}, 1, 0)
-            elseif self.next_pos.y > self.old_pos.y then
-                self.object:set_animation({x=2, y=2}, 1, 0)
-            else
-                self.object:set_animation({x=0, y=0}, 1, 0)
-            end
+        if self.old_direction.y < 0 then
+            self.object:set_animation({x=1, y=1}, 1, 0)
+        elseif self.old_direction.y > 0  then
+            self.object:set_animation({x=2, y=2}, 1, 0)
         else
             self.object:set_animation({x=0, y=0}, 1, 0)
         end
@@ -470,47 +571,77 @@ local cart_entity = {
     end,
 
     on_punch = function(self, puncher, time_from_last_punch, tool_capabilities, direction)
-    	-- Punched by non-player
     	if not puncher or not puncher:is_player() then
+            -- Punched by non-player
     		self.punched = true
             self.punch_direction = direction
-    		return
-    	end
-    	-- Player digs cart by sneak-punch
-    	if puncher:get_player_control().sneak then
-    		if self.sound_handle then
-    			minetest.sound_stop(self.sound_handle)
-    		end
-    		-- Detach driver and items
-    		if self.driver then
-    			if self.old_pos then
-    				self.object:setpos(self.old_pos)
-    			end
-    			local player = minetest.get_player_by_name(self.driver)
-    			carts:manage_attachment(player, nil)
-    		end
-    		for _,obj_ in ipairs(self.attached_items) do
-    			if obj_ then
-    				obj_:set_detach()
-    			end
-    		end
-    		-- Pick up cart
-    		local inv = puncher:get_inventory()
-    		if not (creative and creative.is_enabled_for
-    				and creative.is_enabled_for(puncher:get_player_name()))
-    				or not inv:contains_item("main", "carts:cart") then
-    			local leftover = inv:add_item("main", "carts:cart")
-    			-- If no room in inventory add a replacement cart to the world
-    			if not leftover:is_empty() then
-    				minetest.add_item(self.object:getpos(), leftover)
-    			end
-    		end
-    		self.object:remove()
-    		return
-    	end
+        elseif puncher:get_player_control().sneak then
+            -- Player digs cart by sneak-punch
+            if self.driver == nil or puncher:get_player_name() == self.driver then
+        		if self.sound_handle then
+        			minetest.sound_stop(self.sound_handle)
+        		end
+        		-- Detach driver and items
+        		if self.driver then
+        			if self.old_pos then
+        				self.object:setpos(self.old_pos)
+        			end
+        			local player = minetest.get_player_by_name(self.driver)
+        			carts:manage_attachment(player, nil)
+        		end
+        		for _,obj_ in ipairs(self.attached_items) do
+        			if obj_ then
+        				obj_:set_detach()
+        			end
+        		end
+        		-- Pick up cart
+        		local inv = puncher:get_inventory()
+        		if not (creative and creative.is_enabled_for
+        				and creative.is_enabled_for(puncher:get_player_name()))
+        				or not inv:contains_item("main", "carts:cart") then
+        			local leftover = inv:add_item("main", "carts:cart")
+        			-- If no room in inventory add a replacement cart to the world
+        			if not leftover:is_empty() then
+        				minetest.add_item(self.object:getpos(), leftover)
+        			end
+        		end
+        		self.object:remove()
+            end
+        else
+            -- simple tool wear
+            if puncher and puncher:is_player() and puncher:get_wielded_item() then
+                local tool=puncher:get_wielded_item()
+                tool:add_wear(100)
+                puncher:set_wielded_item(tool)
+            end
+            -- cart is not immortal anymore, so handle when it is destroyed
+            minetest.after(0,
+                function(self)
+                    if self.object:get_hp() <= 0 then
+                        -- to stop soun when cart unloads, is destroyed or is picked up
+                        if self.sound_handle then
+                            minetest.sound_stop(self.sound_handle)
+                        end
+                        -- Detach driver and items
+                        if self.driver then
+                            if self.old_pos then
+                                self.object:setpos(self.old_pos)
+                            end
+                            local player = minetest.get_player_by_name(self.driver)
+                            carts:manage_attachment(player, nil)
+                        end
+                        for _,obj_ in ipairs(self.attached_items) do
+                            if obj_ then
+                                obj_:set_detach()
+                            end
+                        end
+                    end
+                end,
+            self)
 
-        self.punched = true
-    	self.punch_direction = puncher:get_look_dir()
+            self.punched = true
+            self.punch_direction = puncher:get_look_dir()
+    	end
     end
 }
 
